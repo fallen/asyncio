@@ -20,6 +20,7 @@ import errno
 import unittest
 from unittest import mock
 import weakref
+import test
 
 
 import asyncio
@@ -53,6 +54,18 @@ def osx_tiger():
     return version < (10, 5)
 
 
+def get_local_ip_address(family):
+    with socket.socket(family, socket.SOCK_DGRAM) as s:
+        try:
+            if family == socket.AF_INET:
+                s.connect(("google.fr", 80))
+            else:
+                s.connect(("google.fr", 80, 0, 0))
+            ipaddr = s.getsockname()[0]
+        except:
+            ipaddr = None
+    return ipaddr
+
 ONLYCERT = data_file('ssl_cert.pem')
 ONLYKEY = data_file('ssl_key.pem')
 SIGNED_CERTFILE = data_file('keycert3.pem')
@@ -67,13 +80,14 @@ class MyBaseProto(asyncio.Protocol):
         self.transport = None
         self.state = 'INITIAL'
         self.nbytes = 0
+        self.loop = loop
         if loop is not None:
             self.connected = asyncio.Future(loop=loop)
             self.done = asyncio.Future(loop=loop)
 
     def connection_made(self, transport):
         self.transport = transport
-        assert self.state == 'INITIAL', self.state
+        assert self.state in ('INITIAL', 'CLOSED'), self.state
         self.state = 'CONNECTED'
         if self.connected:
             self.connected.set_result(None)
@@ -91,6 +105,9 @@ class MyBaseProto(asyncio.Protocol):
         self.state = 'CLOSED'
         if self.done:
             self.done.set_result(None)
+            self.done = asyncio.Future(loop=self.loop)
+        if self.connected:
+            self.connected = asyncio.Future(loop=self.loop)
 
 
 class MyProto(MyBaseProto):
@@ -695,6 +712,104 @@ class EventLoopTestsMixin:
                 self.loop.run_until_complete(f)
             self.assertEqual(cm.exception.errno, errno.EADDRINUSE)
             self.assertIn(str(httpd.address), cm.exception.strerror)
+
+    @unittest.skipIf(get_local_ip_address(socket.AF_INET).startswith('127'),
+                     'No non-loopback IP address')
+    @unittest.skipIf(not test.support.is_resource_enabled('network'),
+                     'No network')
+    def test_create_server_multiple_hosts_ipv4(self):
+        print("WE DO THE TEST")
+        print("doing test:{}".format(get_local_ip_address(socket.AF_INET)))
+        ips = [get_local_ip_address(socket.AF_INET)]
+        print("ips : {}".format(ips))
+        proto = MyProto(self.loop)
+        f = self.loop.create_server(lambda: proto, ips, 0)
+        server = self.loop.run_until_complete(f)
+        payload = b'xxx'
+        nbytes_sent = 0
+        #print("sockets : {}".format(server.sockets))
+        for sock in server.sockets:
+            #print("sock is {}; sockname = {}".format(sock, sock.getsockname()))
+            if sock.family == socket.AF_INET6:
+                host, port, _, _ = sock.getsockname()
+            else:
+                host, port = sock.getsockname()
+            self.assertTrue(host in ips)
+
+            client = socket.create_connection((host, port))
+            client.sendall(payload)
+
+            self.loop.run_until_complete(proto.connected)
+            self.assertEqual('CONNECTED', proto.state)
+
+            test_utils.run_until(self.loop, lambda: proto.nbytes > nbytes_sent)
+            nbytes_sent += len(payload)
+            self.assertEqual(nbytes_sent, proto.nbytes)
+
+            # extra info is available
+            self.assertIsNotNone(proto.transport.get_extra_info('sockname'))
+
+            # close connection
+            proto.transport.close()
+            self.loop.run_until_complete(proto.done)
+
+            self.assertEqual('CLOSED', proto.state)
+
+            # the client socket must be closed after to avoid ECONNRESET upon
+            # recv()/send() on the serving socket
+            client.close()
+        # close server
+        server.close()
+
+    @unittest.skipIf(get_local_ip_address(socket.AF_INET6) == '::1',
+                      'No non-loopback IP address')
+    @unittest.skipIf(not test.support.IPV6_ENABLED, 'No IPv6')
+    @unittest.skipIf(not test.support.is_resource_enabled('network'),
+                     'No network')
+    def test_create_server_multiple_hosts_ipv6(self):
+        print("doing test:{}".format(get_local_ip_address(socket.AF_INET6)))
+        ips = [get_local_ip_address(socket.AF_INET6)]
+        if None in ips:
+            self.skipTest("Could not connect via IPv6")
+        print("ips : {}".format(ips))
+        proto = MyProto(self.loop)
+        f = self.loop.create_server(lambda: proto, ips, 0)
+        server = self.loop.run_until_complete(f)
+        payload = b'xxx'
+        nbytes_sent = 0
+        #print("sockets : {}".format(server.sockets))
+        for sock in server.sockets:
+            #print("sock is {}; sockname = {}".format(sock, sock.getsockname()))
+            if sock.family == socket.AF_INET6:
+                host, port, _, _ = sock.getsockname()
+            else:
+                host, port = sock.getsockname()
+            self.assertTrue(host in ips)
+
+            client = socket.create_connection((host, port))
+            client.sendall(payload)
+
+            self.loop.run_until_complete(proto.connected)
+            self.assertEqual('CONNECTED', proto.state)
+
+            test_utils.run_until(self.loop, lambda: proto.nbytes > nbytes_sent)
+            nbytes_sent += len(payload)
+            self.assertEqual(nbytes_sent, proto.nbytes)
+
+            # extra info is available
+            self.assertIsNotNone(proto.transport.get_extra_info('sockname'))
+
+            # close connection
+            proto.transport.close()
+            self.loop.run_until_complete(proto.done)
+
+            self.assertEqual('CLOSED', proto.state)
+
+            # the client socket must be closed after to avoid ECONNRESET upon
+            # recv()/send() on the serving socket
+            client.close()
+        # close server
+        server.close()
 
     def test_create_server(self):
         proto = MyProto(self.loop)

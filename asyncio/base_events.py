@@ -27,6 +27,8 @@ import time
 import traceback
 import sys
 import warnings
+from itertools import chain
+from unittest import mock
 
 from . import compat
 from . import coroutines
@@ -812,18 +814,31 @@ class BaseEventLoop(events.AbstractEventLoop):
             if reuse_address is None:
                 reuse_address = os.name == 'posix' and sys.platform != 'cygwin'
             sockets = []
+
             if host == '':
                 host = None
 
-            infos = yield from self.getaddrinfo(
-                host, port, family=family,
-                type=socket.SOCK_STREAM, proto=0, flags=flags)
-            if not infos:
-                raise OSError('getaddrinfo() returned empty list')
+            if (isinstance(host, str)
+                    or not isinstance(host, collections.Iterable)):
+                host = [host]
+
+            if isinstance(self.getaddrinfo, mock.Mock):
+                raise OSError("getaddrinfo is a Mock!")
+
+            fs = [tasks.ensure_future(self.getaddrinfo(h, port, family=family,
+                                      type=socket.SOCK_STREAM, proto=0,
+                                      flags=flags), loop=self) for h in host]
+            infos = yield from tasks.gather(*fs, loop=self)
+            for h, info in zip(host, infos):
+                if not info:
+                    raise OSError('getaddrinfo({!r}) returned empty list'.format(h))
+            infos = chain.from_iterable(infos)
+            #print("infos : {}".format(infos))
 
             completed = False
             try:
                 for res in infos:
+                    #print("res == {}".format(res))
                     af, socktype, proto, canonname, sa = res
                     try:
                         sock = socket.socket(af, socktype, proto)
