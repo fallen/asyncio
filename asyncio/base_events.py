@@ -797,8 +797,12 @@ class BaseEventLoop(events.AbstractEventLoop):
                       backlog=100,
                       ssl=None,
                       reuse_address=None):
-        """Create a TCP server bound to host and port.
+        """Create a TCP server.
 
+        host can be a string, in that case the TCP server is bound
+        to host and port.
+        host can also be a sequence of strings and in that case the TCP server
+        is bound to all hosts of the sequence.
         Return a Server object which can be used to stop the service.
 
         This method is a coroutine.
@@ -833,12 +837,10 @@ class BaseEventLoop(events.AbstractEventLoop):
                 if not info:
                     raise OSError('getaddrinfo({!r}) returned empty list'.format(h))
             infos = chain.from_iterable(infos)
-            #print("infos : {}".format(infos))
 
             completed = False
             try:
                 for res in infos:
-                    #print("res == {}".format(res))
                     af, socktype, proto, canonname, sa = res
                     try:
                         sock = socket.socket(af, socktype, proto)
