@@ -818,7 +818,6 @@ class BaseEventLoop(events.AbstractEventLoop):
             if reuse_address is None:
                 reuse_address = os.name == 'posix' and sys.platform != 'cygwin'
             sockets = []
-
             if host == '':
                 host = None
 
