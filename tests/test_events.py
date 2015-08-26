@@ -80,14 +80,13 @@ class MyBaseProto(asyncio.Protocol):
         self.transport = None
         self.state = 'INITIAL'
         self.nbytes = 0
-        self.loop = loop
         if loop is not None:
             self.connected = asyncio.Future(loop=loop)
             self.done = asyncio.Future(loop=loop)
 
     def connection_made(self, transport):
         self.transport = transport
-        assert self.state in ('INITIAL', 'CLOSED'), self.state
+        assert self.state == 'INITIAL', self.state
         self.state = 'CONNECTED'
         if self.connected:
             self.connected.set_result(None)
@@ -105,9 +104,6 @@ class MyBaseProto(asyncio.Protocol):
         self.state = 'CLOSED'
         if self.done:
             self.done.set_result(None)
-            self.done = asyncio.Future(loop=self.loop)
-        if self.connected:
-            self.connected = asyncio.Future(loop=self.loop)
 
 
 class MyProto(MyBaseProto):
@@ -718,6 +714,7 @@ class EventLoopTestsMixin:
         proto = MyProto(self.loop)
         f = self.loop.create_server(lambda: proto, hosts, 0)
         server = self.loop.run_until_complete(f)
+        self.addCleanup(server.close)
         payload = b'xxx'
         nbytes_sent = 0
         for sock in server.sockets:
@@ -726,32 +723,7 @@ class EventLoopTestsMixin:
             else:
                 host, port, _, _ = sock.getsockname()
 
-            self.assertTrue(host in hosts)
-
-            client = socket.create_connection((host, port))
-            client.sendall(payload)
-
-            self.loop.run_until_complete(proto.connected)
-            self.assertEqual('CONNECTED', proto.state)
-
-            test_utils.run_until(self.loop, lambda: proto.nbytes > nbytes_sent)
-            nbytes_sent += len(payload)
-            self.assertEqual(nbytes_sent, proto.nbytes)
-
-            # extra info is available
-            self.assertIsNotNone(proto.transport.get_extra_info('sockname'))
-
-            # close connection
-            proto.transport.close()
-            self.loop.run_until_complete(proto.done)
-
-            self.assertEqual('CLOSED', proto.state)
-
-            # the client socket must be closed after to avoid ECONNRESET upon
-            # recv()/send() on the serving socket
-            client.close()
-        # close server
-        server.close()
+            self.assertIn(host, hosts)
 
     @unittest.skipIf(not test.support.is_resource_enabled('network'),
                      'No network')
