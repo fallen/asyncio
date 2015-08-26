@@ -44,6 +44,7 @@ setup(
 
     packages=["asyncio"],
     test_suite="runtests.runtests",
+    tests_require=["netifaces"],
 
     ext_modules=extensions,
 )
